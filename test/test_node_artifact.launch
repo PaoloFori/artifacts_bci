@@ -1,0 +1,29 @@
+<launch>
+
+    <!-- ARTIFACTS -->
+    <!-- arguments -->
+    <rosparam command="load" file="$(find artifacts_bci)/cfg/ringbuffer.yaml"/>
+    <rosparam command="load" file="$(find artifacts_bci)/cfg/artifact.yaml"/>
+    
+    <!-- node -->
+    <node name="artifactDetector_node" pkg="artifacts_bci" type="artifactDetector_node" output="screen"> 
+    </node>
+
+    <!-- TEST NODES -->
+    <!-- logger node -->
+    <node pkg="artifacts_bci" type="test_logger_artifacts_bci" name="test_logger_artifacts_bci" output="screen">
+        <param name="output_filename" value="$(find artifacts_bci)/test/artifacts.csv"/>
+    </node>
+    
+    <!-- publisher node -->
+    <arg name="chunkSize" default='25'/>
+    <arg name="samplerate" default='500'/>
+    <node pkg="artifacts_bci" type="test_publisher_artifacts_bci" name="test_publisher_artifacts_bci" output="screen">
+        <param name="csv_file" value="$(find artifacts_bci)/test/rawdata.csv"/>
+        <param name="chunk_size" value="$(arg chunkSize)"/>   
+        <param name="sample_rate" value="$(arg samplerate)"/> 
+    </node>
+
+    
+
+</launch>

@@ -85,12 +85,12 @@ target_link_libraries(artifactDetector_node
                         ) 
 
 # test rosnode NODE
-add_executable(test_publisher_artifacts_bci test/node/publisher.cpp)
+add_executable(test_publisher_artifacts_bci test/publisher.cpp)
 target_link_libraries(test_publisher_artifacts_bci 
                       ${PROJECT_NAME}
                       )  
 
-add_executable(test_logger_artifacts_bci test/node/logger.cpp)
+add_executable(test_logger_artifacts_bci test/logger.cpp)
 target_link_libraries(test_logger_artifacts_bci 
                       ${PROJECT_NAME}
                       )  

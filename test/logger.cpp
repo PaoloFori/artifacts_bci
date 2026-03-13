@@ -14,7 +14,7 @@ public:
             ROS_WARN("Parameter 'output_filename' doesn't found. Default: %s", output_filename_.c_str());
         }
 
-        std::string topic = "/cvsa/artifact_presence";
+        std::string topic = "/artifact_presence";
         sub_ = nh.subscribe(topic, 1, &LoggerNode::callback, this);
 
         this->artifacts_ = std::vector<int>(this->max_expected_size_, 0);
@@ -39,6 +39,7 @@ public:
 
     void callback(const artifacts_bci::artifact_presence::ConstPtr& msg) {
         bool c_has_artifact = msg->has_artifact;
+        std::cout << "Received message with seq: " << msg->seq << std::endl;
         if(c_has_artifact)
             this->artifacts_[msg->seq] = 1;
     }

@@ -1,7 +1,10 @@
 ArtifactCfg:
   name: artifact
   params: 
-    sampleRate: 512
+    sampleRate: 500
+    modality: online
+    nchannels: 32
+    chunkSize: 25
     th_hEOG: 60
     th_vEOG: 60
     th_peaks: 100

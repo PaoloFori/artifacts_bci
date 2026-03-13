@@ -1,7 +1,7 @@
 #include "artifacts_bci/ArtifactDetector.h"
 
 ArtifactDetector::ArtifactDetector(void) : nh_() { 
-    this->pub_ = this->nh_.advertise<artifacts_bci::artifact_presence>("/cvsa/artifact_presence", 10);
+    this->pub_ = this->nh_.advertise<artifacts_bci::artifact_presence>("/artifact_presence", 1);
     this->sub_ = this->nh_.subscribe("/neurodata", 1, &ArtifactDetector::on_received_data, this);
 
     this->has_new_data_ = false;
@@ -147,15 +147,15 @@ void ArtifactDetector::on_received_data(const rosneuro_msgs::NeuroFrame &msg){
 bool ArtifactDetector::configure(void){
 
     // General information
-    if(ros::param::get("~nchannels", this->nchannels_) == false){
+    if(!ArtifactDetector::getParam(std::string("nchannels"), this->nchannels_)){
         ROS_ERROR("[ArtifactDetector] Missing 'nchannels' parameter, which is a mandatory parameter");
         return false;
     }
-    if(ros::param::get("~chunkSize", this->chunkSize_) == false){
+    if(!ArtifactDetector::getParam(std::string("chunkSize"), this->chunkSize_)){
         ROS_ERROR("[ArtifactDetector] Missing 'chunkSize' parameter, which is a mandatory parameter");
         return false;
     }
-    if(ros::param::get("~modality", this->modality_) == false){
+    if(!ArtifactDetector::getParam(std::string("modality"), this->modality_)){
         ROS_ERROR("[ArtifactDetector] Missing 'modality' parameter, which is a mandatory parameter");
         return false;
     }
