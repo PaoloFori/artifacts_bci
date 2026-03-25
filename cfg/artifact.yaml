@@ -2,7 +2,8 @@ ArtifactCfg:
   name: artifact
   params: 
     sampleRate: 500
-    modality: online
+    run_mode: online
+    signal_type: eeg
     nchannels: 32
     chunkSize: 25
     th_hEOG: 60

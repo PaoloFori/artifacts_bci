@@ -65,7 +65,7 @@ protected:
     rosneuro::Butterworth<double> filter_high_peaks_;
 
     artifacts_bci::artifact_presence out_;
-    std::string modality_;
+    std::string run_mode_, signal_type_;
 
     std::string name_;
 

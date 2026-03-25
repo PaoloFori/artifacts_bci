@@ -7,6 +7,8 @@ ArtifactDetector::ArtifactDetector(void) : nh_() {
     this->has_new_data_ = false;
     this->has_artifact_ = false;
     this->is_configured_ = false;
+
+    this->name_ = "UnconfiguredArtifactDetector";
 }
 ArtifactDetector::~ArtifactDetector(){
     for(auto& buffer : this->buffers_)
@@ -16,7 +18,7 @@ ArtifactDetector::~ArtifactDetector(){
 void ArtifactDetector::run(){
     ros::Rate r(512);
     if(this->is_configured_ == false){
-        ROS_ERROR("[ArtifactDetector] ArtifactDetector not configured correctly");
+        ROS_ERROR("[%s] ArtifactDetector not configured correctly", this->name_.c_str());
         return;
     }
 
@@ -26,12 +28,12 @@ void ArtifactDetector::run(){
             this->has_new_data_ = false;
             
             if(res == ArtifactDetector::ApplyResults::Error){
-                ROS_ERROR("[ArtifactDetector] Error in ArtifactDetector processing");
+                ROS_ERROR("[%s] Error in ArtifactDetector processing", this->name_.c_str());
                 break;
             }else if(res == ArtifactDetector::ApplyResults::BufferNotFull){
                 this->set_message();
                 this->pub_.publish(this->out_);
-                ROS_WARN("[ArtifactDetector] Buffer not full");
+                ROS_WARN("[%s] Buffer not full", this->name_.c_str());
                 continue;
             }
             this->pub_.publish(this->out_);
@@ -116,7 +118,7 @@ ArtifactDetector::ApplyResults ArtifactDetector::apply(void){
         return ArtifactDetector::ApplyResults::Success;
 
     }catch(std::exception& e){
-        ROS_ERROR("[ArtifactDetector] Error in ArtifactDetector processing: %s", e.what());
+        ROS_ERROR("[%s] Error in ArtifactDetector processing: %s", this->name_.c_str(), e.what());
         return ArtifactDetector::ApplyResults::Error;
     }
 }
@@ -130,9 +132,9 @@ void ArtifactDetector::on_received_data(const rosneuro_msgs::NeuroFrame &msg){
     ptr_in = const_cast<float*>(msg.eeg.data.data());
     ptr_eog = const_cast<float*>(msg.exg.data.data());
     
-    if(this->modality_ == "online"){ // reminder: if EOG the last channel is mapped in the exg
+    if(this->run_mode_ == "online" || (this->run_mode_ == "offline" && this->signal_type_ == "eeg")){ // reminder: if EOG the last channel is mapped in the exg
         this->data_in_ = Eigen::Map<rosneuro::DynamicMatrix<float>>(ptr_in, this->nchannels_, this->chunkSize_); // channels x sample
-    }else if(this->modality_ == "offline"){
+    }else if(this->run_mode_ == "offline" && this->signal_type_ == "eeg_eog"){
         Eigen::MatrixXf eeg_data = Eigen::Map<rosneuro::DynamicMatrix<float>>(ptr_in, this->nchannels_ - 1, this->chunkSize_); // for the eog
         Eigen::MatrixXf eog_data = Eigen::Map<Eigen::Matrix<float, 1, -1>>(ptr_eog, 1, this->chunkSize_);
         this->data_in_ = Eigen::MatrixXf(this->nchannels_, this->chunkSize_); // channels x sample
@@ -148,31 +150,35 @@ bool ArtifactDetector::configure(void){
 
     // General information
     if(!ArtifactDetector::getParam(std::string("nchannels"), this->nchannels_)){
-        ROS_ERROR("[ArtifactDetector] Missing 'nchannels' parameter, which is a mandatory parameter");
+        ROS_ERROR("[%s] Missing 'nchannels' parameter, which is a mandatory parameter", this->name_.c_str());
         return false;
     }
     if(!ArtifactDetector::getParam(std::string("chunkSize"), this->chunkSize_)){
-        ROS_ERROR("[ArtifactDetector] Missing 'chunkSize' parameter, which is a mandatory parameter");
+        ROS_ERROR("[%s] Missing 'chunkSize' parameter, which is a mandatory parameter", this->name_.c_str());
         return false;
     }
-    if(!ArtifactDetector::getParam(std::string("modality"), this->modality_)){
-        ROS_ERROR("[ArtifactDetector] Missing 'modality' parameter, which is a mandatory parameter");
+    if(!ArtifactDetector::getParam(std::string("run_mode"), this->run_mode_)){
+        ROS_ERROR("[%s] Missing 'run_mode' parameter, which is a mandatory parameter", this->name_.c_str());
         return false;
     }
+    if (!ArtifactDetector::getParam(std::string("signal_type"), this->signal_type_)) { // is important the order!
+        ROS_ERROR("[%s] Cannot find param signal_type", this->name_.c_str());
+        return false;
+    } 
     if (!ArtifactDetector::getParam(std::string("th_hEOG"), this->th_hEOG_)) {
-        ROS_ERROR("[ArtifactDetector] Cannot find param th_hEOG");
+        ROS_ERROR("[%s] Cannot find param th_hEOG", this->name_.c_str());
         return false;
     }
     if (!ArtifactDetector::getParam(std::string("th_vEOG"), this->th_vEOG_)) {
-        ROS_ERROR("[ArtifactDetector] Cannot find param th_vEOG");
+        ROS_ERROR("[%s] Cannot find param th_vEOG", this->name_.c_str());
         return false;
     }
     if (!ArtifactDetector::getParam(std::string("th_peaks"), this->th_peaks_)) {
-        ROS_ERROR("[ArtifactDetector] Cannot find param th_peaks");
+        ROS_ERROR("[%s] Cannot find param th_peaks", this->name_.c_str());
         return false;
     }
     if (!ArtifactDetector::getParam(std::string("EOG_ch"), this->EOG_ch_)) { // is important the order!
-        ROS_ERROR("[ArtifactDetector] Cannot find param EOG_ch");
+        ROS_ERROR("[%s] Cannot find param EOG_ch", this->name_.c_str());
         return false;
     }
     for(int i = 0; i < this->EOG_ch_.size(); i++){
@@ -193,28 +199,28 @@ bool ArtifactDetector::configure(void){
     int filterOrder_EOG, filterOrder_peaks;
     double sampleRate, freq_high_EOG, freq_low_EOG, freq_high_peaks;
     if(!ArtifactDetector::getParam(std::string("sampleRate"), sampleRate)){
-        ROS_ERROR("[ArtifactDetector] Missing 'sampleRate' parameter, which is a mandatory parameter");
+        ROS_ERROR("[%s] Missing 'sampleRate' parameter, which is a mandatory parameter", this->name_.c_str());
         return false;
     }
     if (!ArtifactDetector::getParam(std::string("freq_high_EOG"), freq_high_EOG)) {
-        ROS_ERROR("[ArtifactDetector] Cannot find param freq_high_EOG");
+        ROS_ERROR("[%s] Cannot find param freq_high_EOG", this->name_.c_str());
         return false;
     }
     if (!ArtifactDetector::getParam(std::string("freq_low_EOG"), freq_low_EOG)) {
-        ROS_ERROR("[ArtifactDetector] Cannot find param freq_low_EOG");
+        ROS_ERROR("[%s] Cannot find param freq_low_EOG", this->name_.c_str());
         return false;
     }
     if (!ArtifactDetector::getParam(std::string("freq_high_peaks"), freq_high_peaks)) {
-        ROS_ERROR("[ArtifactDetector] Cannot find param freq_high_peaks");
+        ROS_ERROR("[%s] Cannot find param freq_high_peaks", this->name_.c_str());
         return false;
     }
 
     if (!ArtifactDetector::getParam(std::string("filterOrder_EOG"), filterOrder_EOG)) {
-        ROS_ERROR("[ArtifactDetector] Cannot find param filterOrder_EOG");
+        ROS_ERROR("[%s] Cannot find param filterOrder_EOG", this->name_.c_str());
         return false;
     }
     if (!ArtifactDetector::getParam(std::string("filterOrder_peaks"), filterOrder_peaks)) {
-        ROS_ERROR("[ArtifactDetector] Cannot find param filterOrder_peaks");
+        ROS_ERROR("[%s] Cannot find param filterOrder_peaks", this->name_.c_str());
         return false;
     }
 
@@ -227,7 +233,7 @@ bool ArtifactDetector::configure(void){
         this->car_filter_.configure(this->EOG_ch_);
 
     }catch(std::exception& e){
-        ROS_ERROR("[ArtifactDetector] Error in filter configuration: %s", e.what());
+        ROS_ERROR("[%s] Error in filter configuration: %s", this->name_.c_str(), e.what());
         return false;
     }
 
@@ -238,7 +244,7 @@ bool ArtifactDetector::configure(const std::string& param_name) {
     bool retval = false;
     XmlRpc::XmlRpcValue config;
     if (!this->nh_.getParam(param_name, config)) {
-        ROS_ERROR("[ArtifactDetector] Could not find parameter %s on the server, are you sure that it was pushed up correctly?", param_name.c_str());
+        ROS_ERROR("[%s] Could not find parameter %s on the server, are you sure that it was pushed up correctly?", this->name_.c_str(), param_name.c_str());
         return false;
     }
 
@@ -248,7 +254,7 @@ bool ArtifactDetector::configure(const std::string& param_name) {
 
 bool ArtifactDetector::configure(XmlRpc::XmlRpcValue& config) {
     if (this->is_configured_) {
-        ROS_ERROR("[ArtifactDetector] ArtifactDetector %s already being reconfigured", this->name_.c_str());
+        ROS_ERROR("[%s] ArtifactDetector %s already being reconfigured", this->name_.c_str(), this->name_.c_str());
     }
     this->is_configured_ = false;
 
@@ -260,7 +266,7 @@ bool ArtifactDetector::configure(XmlRpc::XmlRpcValue& config) {
 
 bool ArtifactDetector::loadConfiguration(XmlRpc::XmlRpcValue& config) {
     if(config.getType() != XmlRpc::XmlRpcValue::TypeStruct) {
-        ROS_ERROR("[ArtifactDetector] An ArtifactDetector configuration must be a map with fields name, and params");
+        ROS_ERROR("[%s] An ArtifactDetector configuration must be a map with fields name, and params", this->name_.c_str());
         return false;
     }
 
@@ -271,11 +277,11 @@ bool ArtifactDetector::loadConfiguration(XmlRpc::XmlRpcValue& config) {
     if(config.hasMember("params")) {
         XmlRpc::XmlRpcValue params = config["params"];
         if(params.getType() != XmlRpc::XmlRpcValue::TypeStruct) {
-            ROS_ERROR("[ArtifactDetector] params must be a map");
+            ROS_ERROR("[%s] params must be a map", this->name_.c_str());
             return false;
         } else {
             for(XmlRpc::XmlRpcValue::iterator it = params.begin(); it != params.end(); ++it) {
-                ROS_DEBUG("[ArtifactDetector] Loading param %s", it->first.c_str());
+                ROS_DEBUG("[%s] Loading param %s", this->name_.c_str(), it->first.c_str());
                 this->params_[it->first] = it->second;
             }
         }
@@ -285,12 +291,12 @@ bool ArtifactDetector::loadConfiguration(XmlRpc::XmlRpcValue& config) {
 
 bool ArtifactDetector::setName(XmlRpc::XmlRpcValue& config) {
     if(!config.hasMember("name")) {
-        ROS_ERROR("[ArtifactDetector] ArtifactDetector didn't have name defined, this is required");
+        ROS_ERROR("[%s] ArtifactDetector didn't have name defined, this is required", this->name_.c_str());
         return false;
     }
 
     this->name_ = std::string(config["name"]);
-    ROS_DEBUG("[ArtifactDetector] Configuring ArtifactDetector with name %s", this->name_.c_str());
+    ROS_DEBUG("[%s] Configuring ArtifactDetector with name %s", this->name_.c_str(), this->name_.c_str());
     return true;
 }
 
