@@ -10,11 +10,10 @@ int main(int argc, char** argv) {
     ArtifactDetector bci_artifact_detector;
     
     if(bci_artifact_detector.configure("ArtifactCfg") == false) {
-        std::cerr<<"SETUP ERROR"<<std::endl;
-        return -1;
+        ROS_ERROR("[ArtifactDetector] Configuration failed");
+        ros::shutdown();
+        return 0;
     }
-
-    ROS_INFO("[INFO] Configuration done");
     
     bci_artifact_detector.run();
     
