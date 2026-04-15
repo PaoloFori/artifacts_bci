@@ -14,7 +14,7 @@ This directory contains the artifact detection node. This node is responsible fo
 
 ### 2. Output
 
-* **Topic:** `/cvsa/artifact_presence`
+* **Topic:** `/artifact_presence`
 * **Message Type:** Custom (defined in this package)
 * **Data:** The node publishes a custom message containing two fields:
     * `has_artifact` (bool): `true` if an artifact (EOG or peak) is detected, `false` otherwise.
@@ -28,29 +28,37 @@ This node **requires a YAML configuration file** that defines all the filters, c
 
 The YAML file must contain the following fields:
 
-* `sampleRate`: The sampling frequency of the input data (e.g., 512 Hz).
+* `nchannels`: Total number of channels acquired (e.g., 32 or 39).
+* `chunkSize`: The size of the sample chunks coming from the acquisition (e.g., usually 25 for framerate=20, sample_rate=500).
+* `run_mode`: Define if the protocol is running `online` or `offline`. This helps map the channels properly.
+* `signal_type`: Can be `eeg` or `eeg_eog`. Used in conjunction with `run_mode` to fetch EOG channels correctly if they are mapped in the `exg` blocks (e.g., LSL playback vs live acquisition).
+* `sampleRate`: The sampling frequency of the input data (e.g., 500 Hz).
 * `th_hEOG`: Threshold (in µV) for horizontal eye movement.
 * `th_vEOG`: Threshold (in µV) for vertical eye movement.
 * `th_peaks`: Threshold (in µV) for signal peaks (e.g., muscle artifacts or saturation).
-* `EOG_ch`: A list of 3 integers, specifying the indices of the **Fp1**, **Fp2**, and **EOG** channels (in that order).
+* `EOG_ch`: A list specifying the 1-based indices of the EOG-associated channels (e.g., `[12, 16]` or `[1, 2, 19]`). Internally they are mapped to 0-based indexing.
 * `freq_high_EOG` / `freq_low_EOG`: Cutoff frequencies (in Hz) for the EOG band-pass filter (e.g., 1-10 Hz).
 * `freq_high_peaks`: Cutoff frequency (in Hz) for the peaks high-pass filter (e.g., 2 Hz).
 * `filterOrder_EOG` / `filterOrder_peaks`: The order of the respective IIR (Butterworth) filters.
 
-#### Example `artifact_cfg.yaml`
+#### Example `artifact.yaml`
 
 ```yaml
 ArtifactCfg:
   name: artifact
   params: 
-    sampleRate: 512
-    th_hEOG: 70
-    th_vEOG: 70
-    th_peaks: 160
-    EOG_ch: [1,2,19]
+    nchannels: 32
+    chunkSize: 25
+    run_mode: online
+    signal_type: eeg
+    sampleRate: 500
+    th_hEOG: 100
+    th_vEOG: 100
+    th_peaks: 140
+    EOG_ch: [12, 16]
     freq_high_EOG: 1
     freq_low_EOG: 10
-    freq_high_peaks: 2
+    freq_high_peaks: 1
     filterOrder_EOG: 4
     filterOrder_peaks: 4
 ```
@@ -59,22 +67,20 @@ ArtifactCfg:
 
 ### 4. Workflow
 
-1.  **Load Configuration:** On startup, the node loads all parameters (thresholds, channels, filters) from the YAML file.
-2.  **Buffer Data:** The node maintains a **ring buffer** of 512 samples (equivalent to 1 second of data at 512 Hz) for analysis.
-3.  **EOG Monitoring:**
-    * The EOG channels (defined in `EOG_ch`) are extracted.
-    * A band-pass filter (e.g., 1-10 Hz) is applied to the EOG channels.
-    * Horizontal movement is calculated: $hEOG = Fp1 - Fp2$.
-    * Vertical movement is calculated: $vEOG = (Fp1 + Fp2) / 2 - EOG$.
-    * If `abs(hEOG) > th_hEOG` OR `abs(vEOG) > th_vEOG`, the EOG artifact is considered present.
-4.  **Peak Monitoring:**
-    * A high-pass filter (e.g., 2 Hz) is applied to all EEG channels (to remove the problematic DC drift from the AntNeuro cap).
-    * The absolute value of each filtered sample, on every channel, is compared against `th_peaks`.
-    * If *any* channel exceeds the threshold (`abs(sample) > th_peaks`), the peak-type artifact is considered present.
-5.  **Publish:**
+1.  **Format Input Data:** The node receives data from `rosneuro_msgs` taking `run_mode` and `signal_type` into account to dynamically reconstruct the matrix (mapping standard `eeg` data array or hybrid `exg` placements used in LSL standard recordings).
+2.  **CAR Filter:** Applies a **CAR (Common Average Reference)** spatial filter across the channels, strictly excluding the designated EOG channels (provided in `EOG_ch`) to prevent eye movement artifacts from polluting the EEG channels prior to detection.
+3.  **Buffer Filtering:** The filtered sequences run through specific IIR filters (High-pass for peaks, Band-pass for EOG) and are fed sequentially into fixed RingBuffers (usually 1 full second of samples based on the sampling rate).
+4.  **EOG Monitoring:**
+    * If EOG channels are correctly specified, horizontal movement is calculated ($hEOG = \text{col}_0 - \text{col}_1$).
+    * Vertical movement applies an average combination against a third baseline (if available).
+    * If `abs(hEOG) > th_hEOG` OR `abs(vEOG) > th_vEOG`, an EOG artifact flag is triggered.
+5.  **Peak Monitoring:**
+    * The node evaluates the absolute values of the remaining pure EEG channels in the peak buffer (EOG channels are deliberately skipped).
+    * If *any* channel exceeds the target threshold (`abs(sample) > th_peaks`), the peak-type artifact flag is triggered.
+6.  **Publish:**
     * If the EOG check OR the Peak check is positive, the node sets `has_artifact = true`.
     * Otherwise, it sets `has_artifact = false`.
-    * The node publishes the message on `/cvsa/artifact_presence`, including the current sample's `seq` number.
+    * The node sequentially publishes the message on `/artifact_presence`, including the current chunk's `seq` number for exact signal alignment.
 
 ---
 
