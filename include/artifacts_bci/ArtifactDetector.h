@@ -54,9 +54,16 @@ protected:
     int nchannels_;
     bool has_artifact_;
     double th_hEOG_, th_vEOG_, th_peaks_;
-    std::vector<int> EOG_ch_; // channel indexes for EOG detection are in 1-based notion
+    std::vector<std::string> EOG_ch_names_; // channel names from YAML (e.g. "Fp1", "Fp2")
+    std::vector<int> EOG_ch_;               // resolved 0-based indices (set in configure_signal)
     int seq_id_;
     bool is_configured_;
+    bool is_signal_configured_;
+
+    double freq_high_EOG_, freq_low_EOG_, freq_high_peaks_;
+    int filterOrder_EOG_, filterOrder_peaks_;
+
+    bool configure_signal(const rosneuro_msgs::NeuroFrame& msg);
 
     rosneuro::Car<float> car_filter_;
 

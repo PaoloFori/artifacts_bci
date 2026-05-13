@@ -41,6 +41,21 @@ int main(int argc, char** argv) {
     int total_samples = full_data.rows();
     ROS_INFO("Loaded data: %d samples x %d channels.", total_samples, n_channels);
 
+    // Standard 32-ch LiveAmp labels – needed by ArtifactDetector to resolve EOG channel names
+    const std::vector<std::string> ch_labels_32 = {
+        "Fp1","Fp2","F3","Fz","F4","FC1","FC2","C3","Cz","C4",
+        "CP1","CP2","P3","Pz","P4","POz","O1","O2","CPz","F1",
+        "F2","FC3","FCz","FC4","C1","C2","CP3","CP4","P5","P1","P2","P6"
+    };
+    std::vector<std::string> ch_labels;
+    if(n_channels == static_cast<int>(ch_labels_32.size())){
+        ch_labels = ch_labels_32;
+    } else {
+        for(int i = 0; i < n_channels; i++)
+            ch_labels.push_back("ch" + std::to_string(i + 1));
+        ROS_WARN("Non-standard channel count (%d) – using generic labels ch1..ch%d", n_channels, n_channels);
+    }
+
     ros::Publisher pub = nh.advertise<rosneuro_msgs::NeuroFrame>(topic, 1);
     ros::Rate loop_rate(sample_rate / n_samples);
 
@@ -66,7 +81,8 @@ int main(int argc, char** argv) {
         msg.header.seq = current_sample / n_samples;
         msg.sr = sample_rate;
         msg.eeg.info.nchannels = n_channels;
-        msg.eeg.info.nsamples = n_samples;
+        msg.eeg.info.nsamples  = n_samples;
+        msg.eeg.info.labels    = ch_labels;
         msg.neuroheader.seq = current_sample/n_samples;
         
         Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> chunk_float;

@@ -1,19 +1,10 @@
 <launch>
 
     <!-- ARTIFACTS -->
-    <!-- arguments -->
-    <rosparam command="load" file="$(find artifacts_cvsa)/cfg/ringbuffer.yaml"/>
-    <rosparam command="load" file="$(find artifacts_cvsa)/cfg/artifact.yaml"/>
-    <arg name="nchannels" default='32'/>
-    <arg name="chunkSize" default='32'/>
-    <arg name="modality" default='online'/>
-    <arg name="samplerate" default='512'/>
+    <rosparam command="load" file="$(find artifacts_bci)/cfg/ringbuffer.yaml"/>
+    <rosparam command="load" file="$(find artifacts_bci)/cfg/artifact.yaml"/>
+    <!-- nchannels, chunkSize, sampleRate are read automatically from the incoming NeuroFrame -->
 
-    <!-- node -->
-    <node name="artifactDetector_node" pkg="artifacts_cvsa" type="artifactDetector_node" output="screen"> 
-        <param name="nchannels"   value="$(arg nchannels)"/>
-        <param name="chunkSize"       value="$(arg chunkSize)"/>
-        <param name="modality" value="$(arg modality)"/>
-    </node>
+    <node name="artifactDetector_node" pkg="artifacts_bci" type="artifactDetector_node" output="screen"/>
 
 </launch>

@@ -7,6 +7,7 @@ ArtifactDetector::ArtifactDetector(void) : nh_() {
     this->has_new_data_ = false;
     this->has_artifact_ = false;
     this->is_configured_ = false;
+    this->is_signal_configured_ = false;
 
     this->name_ = "UnconfiguredArtifactDetector";
 }
@@ -53,7 +54,6 @@ void ArtifactDetector::set_message(){
 ArtifactDetector::ApplyResults ArtifactDetector::apply(void){
 
     try{
-
         int bufferSize, EOG_ch_size;
         this->buffers_[0]->getParam(std::string("size"), bufferSize);
         EOG_ch_size = this->EOG_ch_.size();
@@ -124,6 +124,14 @@ ArtifactDetector::ApplyResults ArtifactDetector::apply(void){
 }
 
 void ArtifactDetector::on_received_data(const rosneuro_msgs::NeuroFrame &msg){
+
+    if(!this->is_signal_configured_){
+        if(!this->configure_signal(msg)){
+            ROS_ERROR("[%s] Failed to configure signal from NeuroFrame", this->name_.c_str());
+            return;
+        }
+    }
+
     this->has_new_data_ = true;
     this->has_artifact_ = false;
 
@@ -131,40 +139,94 @@ void ArtifactDetector::on_received_data(const rosneuro_msgs::NeuroFrame &msg){
     float* ptr_eog;
     ptr_in = const_cast<float*>(msg.eeg.data.data());
     ptr_eog = const_cast<float*>(msg.exg.data.data());
-    
-    if(this->run_mode_ == "online" || (this->run_mode_ == "offline" && this->signal_type_ == "eeg")){ // reminder: if EOG the last channel is mapped in the exg
-        this->data_in_ = Eigen::Map<rosneuro::DynamicMatrix<float>>(ptr_in, this->nchannels_, this->chunkSize_); // channels x sample
-    }else if(this->run_mode_ == "offline" && this->signal_type_ == "eeg_eog"){
-        Eigen::MatrixXf eeg_data = Eigen::Map<rosneuro::DynamicMatrix<float>>(ptr_in, this->nchannels_ - 1, this->chunkSize_); // for the eog
-        Eigen::MatrixXf eog_data = Eigen::Map<Eigen::Matrix<float, 1, -1>>(ptr_eog, 1, this->chunkSize_);
-        this->data_in_ = Eigen::MatrixXf(this->nchannels_, this->chunkSize_); // channels x sample
 
-        // only the last channel is classified as eog (even if it is wrong, since the eog channel is the 18 in py notation)
+    if(this->run_mode_ == "online" || (this->run_mode_ == "offline" && this->signal_type_ == "eeg")){
+        this->data_in_ = Eigen::Map<rosneuro::DynamicMatrix<float>>(ptr_in, this->nchannels_, this->chunkSize_);
+    }else if(this->run_mode_ == "offline" && this->signal_type_ == "eeg_eog"){
+        Eigen::MatrixXf eeg_data = Eigen::Map<rosneuro::DynamicMatrix<float>>(ptr_in, this->nchannels_ - 1, this->chunkSize_);
+        Eigen::MatrixXf eog_data = Eigen::Map<Eigen::Matrix<float, 1, -1>>(ptr_eog, 1, this->chunkSize_);
+        this->data_in_ = Eigen::MatrixXf(this->nchannels_, this->chunkSize_);
         this->data_in_.block(0, 0, this->nchannels_-1, this->chunkSize_) = eeg_data;
         this->data_in_.row(this->nchannels_-1) = eog_data;
     }
     this->seq_id_ = msg.neuroheader.seq;
 }
 
+bool ArtifactDetector::configure_signal(const rosneuro_msgs::NeuroFrame& msg){
+    this->nchannels_ = msg.eeg.info.nchannels;
+    this->chunkSize_ = msg.eeg.info.nsamples;
+    double sampleRate = static_cast<double>(msg.sr);
+
+    if(this->run_mode_ == "offline" && this->signal_type_ == "eeg_eog"){
+        this->nchannels_ += 1; // EEG channels + 1 EOG from exg
+    }
+
+    // Resolve EOG channel names → 0-based indices using NeuroFrame labels
+    const auto& labels = msg.eeg.info.labels;
+    if(labels.empty()){
+        ROS_ERROR("[%s] NeuroFrame eeg.info.labels is empty – cannot resolve EOG channel names", this->name_.c_str());
+        return false;
+    }
+    this->EOG_ch_.clear();
+    for(const auto& name : this->EOG_ch_names_){
+        bool found = false;
+        for(int i = 0; i < static_cast<int>(labels.size()); i++){
+            std::string a = name, b = labels[i];
+            std::transform(a.begin(), a.end(), a.begin(), ::tolower);
+            std::transform(b.begin(), b.end(), b.begin(), ::tolower);
+            if(a == b){
+                this->EOG_ch_.push_back(i); // 0-based
+                found = true;
+                break;
+            }
+        }
+        if(!found){
+            ROS_ERROR("[%s] EOG channel '%s' not found in NeuroFrame labels", this->name_.c_str(), name.c_str());
+            return false;
+        }
+    }
+    ROS_INFO("[%s] EOG channels resolved: %s → indices (0-based): %s",
+             this->name_.c_str(),
+             [&]{ std::string s; for(auto& n : this->EOG_ch_names_) s += n + " "; return s; }().c_str(),
+             [&]{ std::string s; for(auto i : this->EOG_ch_) s += std::to_string(i) + " "; return s; }().c_str());
+
+    try{
+        this->filter_low_EOG_    = rosneuro::Butterworth<double>(rosneuro::ButterType::LowPass,  this->filterOrder_EOG_,   this->freq_low_EOG_,    sampleRate);
+        this->filter_high_EOG_   = rosneuro::Butterworth<double>(rosneuro::ButterType::HighPass, this->filterOrder_EOG_,   this->freq_high_EOG_,   sampleRate);
+        this->filter_high_peaks_ = rosneuro::Butterworth<double>(rosneuro::ButterType::HighPass, this->filterOrder_peaks_, this->freq_high_peaks_, sampleRate);
+
+        this->car_filter_ = rosneuro::Car<float>();
+        this->car_filter_.configure(this->EOG_ch_);
+
+        for(int i = 0; i < 2; i++){
+            this->buffers_.push_back(new rosneuro::RingBuffer<float>());
+            if(!this->buffers_.back()->configure("RingBufferCfg")){
+                ROS_ERROR("[%s] Buffer %d not configured correctly", this->name_.c_str(), i);
+                return false;
+            }
+        }
+    }catch(std::exception& e){
+        ROS_ERROR("[%s] Error in configure_signal: %s", this->name_.c_str(), e.what());
+        return false;
+    }
+
+    ROS_INFO("[%s] Signal configured from NeuroFrame: nchannels=%d, chunkSize=%d, sampleRate=%.1f",
+             this->name_.c_str(), this->nchannels_, this->chunkSize_, sampleRate);
+
+    this->is_signal_configured_ = true;
+    return true;
+}
+
 bool ArtifactDetector::configure(void){
 
-    // General information
-    if(!ArtifactDetector::getParam(std::string("nchannels"), this->nchannels_)){
-        ROS_ERROR("[%s] Missing 'nchannels' parameter, which is a mandatory parameter", this->name_.c_str());
-        return false;
-    }
-    if(!ArtifactDetector::getParam(std::string("chunkSize"), this->chunkSize_)){
-        ROS_ERROR("[%s] Missing 'chunkSize' parameter, which is a mandatory parameter", this->name_.c_str());
-        return false;
-    }
     if(!ArtifactDetector::getParam(std::string("run_mode"), this->run_mode_)){
         ROS_ERROR("[%s] Missing 'run_mode' parameter, which is a mandatory parameter", this->name_.c_str());
         return false;
     }
-    if (!ArtifactDetector::getParam(std::string("signal_type"), this->signal_type_)) { // is important the order!
+    if (!ArtifactDetector::getParam(std::string("signal_type"), this->signal_type_)){
         ROS_ERROR("[%s] Cannot find param signal_type", this->name_.c_str());
         return false;
-    } 
+    }
     if (!ArtifactDetector::getParam(std::string("th_hEOG"), this->th_hEOG_)) {
         ROS_ERROR("[%s] Cannot find param th_hEOG", this->name_.c_str());
         return false;
@@ -177,66 +239,34 @@ bool ArtifactDetector::configure(void){
         ROS_ERROR("[%s] Cannot find param th_peaks", this->name_.c_str());
         return false;
     }
-    if (!ArtifactDetector::getParam(std::string("EOG_ch"), this->EOG_ch_)) { // is important the order!
-        ROS_ERROR("[%s] Cannot find param EOG_ch", this->name_.c_str());
+    if (!ArtifactDetector::getParam(std::string("EOG_ch_names"), this->EOG_ch_names_)){
+        ROS_ERROR("[%s] Cannot find param EOG_ch_names (expected a list of channel name strings)", this->name_.c_str());
         return false;
     }
-    for(int i = 0; i < this->EOG_ch_.size(); i++){
-        this->EOG_ch_[i] = this->EOG_ch_[i] - 1; // to bring it in 0 based
-    }
+    // EOG_ch_ indices are resolved in configure_signal() once NeuroFrame labels are available
 
-    // Buffer configuration 
-    for(int i = 0; i < 2; i++){
-        this->buffers_.push_back(new rosneuro::RingBuffer<float>());
-        if(!this->buffers_.back()->configure("RingBufferCfg")){
-            ROS_ERROR("[%s %s Hz] Buffer not configured correctly", 
-                this->buffers_.back()->name().c_str(),
-                std::string(i == 0 ? "EOG" : "peaks").c_str());
-        }
-    }
-
-    // Filter parameters
-    int filterOrder_EOG, filterOrder_peaks;
-    double sampleRate, freq_high_EOG, freq_low_EOG, freq_high_peaks;
-    if(!ArtifactDetector::getParam(std::string("sampleRate"), sampleRate)){
-        ROS_ERROR("[%s] Missing 'sampleRate' parameter, which is a mandatory parameter", this->name_.c_str());
-        return false;
-    }
-    if (!ArtifactDetector::getParam(std::string("freq_high_EOG"), freq_high_EOG)) {
+    if (!ArtifactDetector::getParam(std::string("freq_high_EOG"), this->freq_high_EOG_)) {
         ROS_ERROR("[%s] Cannot find param freq_high_EOG", this->name_.c_str());
         return false;
     }
-    if (!ArtifactDetector::getParam(std::string("freq_low_EOG"), freq_low_EOG)) {
+    if (!ArtifactDetector::getParam(std::string("freq_low_EOG"), this->freq_low_EOG_)) {
         ROS_ERROR("[%s] Cannot find param freq_low_EOG", this->name_.c_str());
         return false;
     }
-    if (!ArtifactDetector::getParam(std::string("freq_high_peaks"), freq_high_peaks)) {
+    if (!ArtifactDetector::getParam(std::string("freq_high_peaks"), this->freq_high_peaks_)) {
         ROS_ERROR("[%s] Cannot find param freq_high_peaks", this->name_.c_str());
         return false;
     }
-
-    if (!ArtifactDetector::getParam(std::string("filterOrder_EOG"), filterOrder_EOG)) {
+    if (!ArtifactDetector::getParam(std::string("filterOrder_EOG"), this->filterOrder_EOG_)) {
         ROS_ERROR("[%s] Cannot find param filterOrder_EOG", this->name_.c_str());
         return false;
     }
-    if (!ArtifactDetector::getParam(std::string("filterOrder_peaks"), filterOrder_peaks)) {
+    if (!ArtifactDetector::getParam(std::string("filterOrder_peaks"), this->filterOrder_peaks_)) {
         ROS_ERROR("[%s] Cannot find param filterOrder_peaks", this->name_.c_str());
         return false;
     }
 
-    try{
-        this->filter_low_EOG_    = rosneuro::Butterworth<double>(rosneuro::ButterType::LowPass,  filterOrder_EOG,  freq_low_EOG, sampleRate);
-        this->filter_high_EOG_   = rosneuro::Butterworth<double>(rosneuro::ButterType::HighPass,  filterOrder_EOG,  freq_high_EOG, sampleRate);
-        this->filter_high_peaks_ = rosneuro::Butterworth<double>(rosneuro::ButterType::HighPass,  filterOrder_peaks,  freq_high_peaks, sampleRate);
-
-        this->car_filter_ = rosneuro::Car<float>();
-        this->car_filter_.configure(this->EOG_ch_);
-
-    }catch(std::exception& e){
-        ROS_ERROR("[%s] Error in filter configuration: %s", this->name_.c_str(), e.what());
-        return false;
-    }
-
+    // nchannels, chunkSize, sampleRate are derived from the first NeuroFrame in configure_signal()
     return true;
 }
 

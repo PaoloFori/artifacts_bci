@@ -1,18 +1,15 @@
 ArtifactCfg:
   name: artifact
-  params: 
-    sampleRate: 500
+  params:
     run_mode: online
     signal_type: eeg
-    nchannels: 32
-    chunkSize: 25
-    th_hEOG: 60
-    th_vEOG: 60
-    th_peaks: 100
-    EOG_ch: [1,2,19] # FP1, FP2, EOG
+    th_hEOG: 75
+    th_vEOG: 75
+    th_peaks: 150
+    EOG_ch_names: ['Fp1', 'Fp2']  # channel names resolved from NeuroFrame labels
     freq_high_EOG: 1
     freq_low_EOG: 10
     freq_high_peaks: 1
     filterOrder_EOG: 4
     filterOrder_peaks: 4
-
+    # nchannels, chunkSize, sampleRate derived automatically from the NeuroFrame

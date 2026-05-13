@@ -2,4 +2,4 @@ RingBufferCfg:
   name: ringbuffer
   type: RingBufferFloat
   params: 
-    size: 500
+    size: 250

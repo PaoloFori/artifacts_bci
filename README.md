@@ -1,95 +1,204 @@
-# artifacts_cvsa
+# artifacts_bci
 
-This directory contains the artifact detection node. This node is responsible for the real-time identification of physiological artifacts (EOG and signal peaks) in the raw EEG signal.
-
----
-
-### 1. Input
-
-* **Topic:** `/neurodata`
-* **Message Type:** `rosneuro_msgs/NeuroFrame`
-* **Data:** The node subscribes to this topic, expecting to receive raw EEG signal samples in real-time.
+Real-time artifact detection node for the BCI-VR pipeline. Identifies physiological artifacts (EOG eye movements and signal peaks) in the raw EEG signal and gates the classifier pipeline accordingly.
 
 ---
 
-### 2. Output
+## 1. Input / Output
 
-* **Topic:** `/artifact_presence`
-* **Message Type:** Custom (defined in this package)
-* **Data:** The node publishes a custom message containing two fields:
-    * `has_artifact` (bool): `true` if an artifact (EOG or peak) is detected, `false` otherwise.
-    * `seq` (uint32): The sequence number (sample index) of the analyzed sample, used to synchronize this output with other processing nodes (e.g., `cvsa_processing`).
+| Direction | Topic | Message type |
+|-----------|-------|-------------|
+| Input  | `/neurodata` | `rosneuro_msgs/NeuroFrame` |
+| Output | `/artifact_presence` | `artifacts_bci/artifact_presence` |
+
+The output message contains:
+- `has_artifact` (bool) — `true` if any artifact (EOG or peak) is detected.
+- `seq` (uint32) — sequence number copied from `NeuroFrame.neuroheader.seq`, used by the integrator for synchronisation.
 
 ---
 
-### 3. Configuration
+## 2. Auto-configuration from NeuroFrame
 
-This node **requires a YAML configuration file** that defines all the filters, channels, and thresholds necessary for detection.
+`nchannels`, `chunkSize`, and `sampleRate` are **no longer set in the YAML**. They are extracted automatically from the first `NeuroFrame` received:
 
-The YAML file must contain the following fields:
+| NeuroFrame field | Used as |
+|-----------------|---------|
+| `eeg.info.nchannels` | `nchannels` |
+| `eeg.info.nsamples`  | `chunkSize` |
+| `sr`                 | `sampleRate` |
 
-* `nchannels`: Total number of channels acquired (e.g., 32 or 39).
-* `chunkSize`: The size of the sample chunks coming from the acquisition (e.g., usually 25 for framerate=20, sample_rate=500).
-* `run_mode`: Define if the protocol is running `online` or `offline`. This helps map the channels properly.
-* `signal_type`: Can be `eeg` or `eeg_eog`. Used in conjunction with `run_mode` to fetch EOG channels correctly if they are mapped in the `exg` blocks (e.g., LSL playback vs live acquisition).
-* `sampleRate`: The sampling frequency of the input data (e.g., 500 Hz).
-* `th_hEOG`: Threshold (in µV) for horizontal eye movement.
-* `th_vEOG`: Threshold (in µV) for vertical eye movement.
-* `th_peaks`: Threshold (in µV) for signal peaks (e.g., muscle artifacts or saturation).
-* `EOG_ch`: A list specifying the 1-based indices of the EOG-associated channels (e.g., `[12, 16]` or `[1, 2, 19]`). Internally they are mapped to 0-based indexing.
-* `freq_high_EOG` / `freq_low_EOG`: Cutoff frequencies (in Hz) for the EOG band-pass filter (e.g., 1-10 Hz).
-* `freq_high_peaks`: Cutoff frequency (in Hz) for the peaks high-pass filter (e.g., 2 Hz).
-* `filterOrder_EOG` / `filterOrder_peaks`: The order of the respective IIR (Butterworth) filters.
+EOG channel indices are also resolved at this point by matching `EOG_ch_names` against `eeg.info.labels` (case-insensitive). If any name is not found the node logs an error and stops.
 
-#### Example `artifact.yaml`
+---
+
+## 3. Configuration (YAML)
+
+### `artifact.yaml`
 
 ```yaml
 ArtifactCfg:
   name: artifact
-  params: 
-    nchannels: 32
-    chunkSize: 25
-    run_mode: online
-    signal_type: eeg
-    sampleRate: 500
-    th_hEOG: 100
-    th_vEOG: 100
-    th_peaks: 140
-    EOG_ch: [12, 16]
-    freq_high_EOG: 1
-    freq_low_EOG: 10
-    freq_high_peaks: 1
+  params:
+    run_mode: online          # 'online' | 'offline'
+    signal_type: eeg          # 'eeg'   | 'eeg_eog'
+    th_hEOG: 75               # µV – horizontal EOG threshold
+    th_vEOG: 75               # µV – vertical EOG threshold
+    th_peaks: 150             # µV – peak amplitude threshold
+    EOG_ch_names: ['Fp1', 'Fp2']  # channel names (resolved from NeuroFrame labels)
+    freq_low_EOG: 10          # Hz – low-pass cutoff of EOG bandpass
+    freq_high_EOG: 1          # Hz – high-pass cutoff of EOG bandpass
+    freq_high_peaks: 1        # Hz – high-pass cutoff for peak detection
     filterOrder_EOG: 4
     filterOrder_peaks: 4
+    # nchannels, chunkSize, sampleRate: derived automatically from NeuroFrame
+```
+
+### `ringbuffer.yaml`
+
+```yaml
+RingBufferCfg:
+  name: ringbuffer_artifact
+  type: RingBufferFloat
+  params:
+    size: 250   # 0.5 s at 500 Hz  (use artifact_ringbuffer.yaml in evaluation.launch)
+```
+
+> **Threshold guidance:**  
+> - `th_hEOG` / `th_vEOG`: 75–100 µV. Blinks produce ~150–300 µV after the 1–10 Hz bandpass; saccades ~50–100 µV.  
+> - `th_peaks`: 120–150 µV. Calibrate empirically as ~2–3× the typical peak value during a clean resting session.
+
+---
+
+## 4. Processing pipeline
+
+```
+NeuroFrame.eeg  [channels × chunkSize]
+    │
+    ▼ configure_signal()  ← called once on first message
+    │   resolve EOG_ch_names → indices from eeg.info.labels
+    │   init Butterworth filters + ring buffers
+    │
+    ▼ CAR  (mean of non-EOG channels subtracted from all channels)
+    │
+    ├─ EOG path:  LP(10 Hz) → HP(1 Hz)  →  ring buffer (0.5 s)
+    │              max|hEOG| > th_hEOG  OR  max|vEOG| > th_vEOG  → artifact
+    │
+    └─ Peaks path: HP(1 Hz)  →  ring buffer (0.5 s)
+                   max|EEG channels| > th_peaks  → artifact
+
+    → publish /artifact_presence  {has_artifact, seq}
+```
+
+**hEOG / vEOG formulas (2 or 3 EOG channels):**
+
+| Channels | hEOG | vEOG |
+|---------|------|------|
+| 2 (`[Fp1, Fp2]`) | `Fp1 − Fp2` | `(Fp1 + Fp2) / 2` |
+| 3 (`[Fp1, Fp2, EOG]`) | `Fp1 − Fp2` | `(Fp1 + Fp2) / 2 − EOG` |
+
+---
+
+## 5. Launch files
+
+### Production
+
+```bash
+# Included in evaluation.launch via:
+#   <rosparam command="load" file=".../artifact_ringbuffer.yaml"/>
+#   <rosparam command="load" file=".../artifact.yaml" subst_value="true"/>
+#   <node name="artifactDetector_node" .../>
+roslaunch launchers_bci evaluation.launch paradigm:=hybrid
+```
+
+### Standalone example
+
+```bash
+roslaunch artifacts_bci example_node_artifact.launch
 ```
 
 ---
 
-### 4. Workflow
+## 6. Testing
 
-1.  **Format Input Data:** The node receives data from `rosneuro_msgs` taking `run_mode` and `signal_type` into account to dynamically reconstruct the matrix (mapping standard `eeg` data array or hybrid `exg` placements used in LSL standard recordings).
-2.  **CAR Filter:** Applies a **CAR (Common Average Reference)** spatial filter across the channels, strictly excluding the designated EOG channels (provided in `EOG_ch`) to prevent eye movement artifacts from polluting the EEG channels prior to detection.
-3.  **Buffer Filtering:** The filtered sequences run through specific IIR filters (High-pass for peaks, Band-pass for EOG) and are fed sequentially into fixed RingBuffers (usually 1 full second of samples based on the sampling rate).
-4.  **EOG Monitoring:**
-    * If EOG channels are correctly specified, horizontal movement is calculated ($hEOG = \text{col}_0 - \text{col}_1$).
-    * Vertical movement applies an average combination against a third baseline (if available).
-    * If `abs(hEOG) > th_hEOG` OR `abs(vEOG) > th_vEOG`, an EOG artifact flag is triggered.
-5.  **Peak Monitoring:**
-    * The node evaluates the absolute values of the remaining pure EEG channels in the peak buffer (EOG channels are deliberately skipped).
-    * If *any* channel exceeds the target threshold (`abs(sample) > th_peaks`), the peak-type artifact flag is triggered.
-6.  **Publish:**
-    * If the EOG check OR the Peak check is positive, the node sets `has_artifact = true`.
-    * Otherwise, it sets `has_artifact = false`.
-    * The node sequentially publishes the message on `/artifact_presence`, including the current chunk's `seq` number for exact signal alignment.
+### 6a. CSV-based test (quick sanity check)
+
+Uses `rawdata.csv` published chunk by chunk via the test publisher.
+
+```bash
+roslaunch artifacts_bci test_node_artifact.launch
+```
+
+Produces `test/artifacts.csv`. Compare with MATLAB:
+
+```matlab
+input_mode = 'csv';
+test_artifacts   % in MATLAB, from workspace root
+```
+
+### 6b. GDF-based test (realistic end-to-end validation)
+
+Replays `test/prova32ch.gdf` (512 Hz, ~33 channels, ~382 s) through the real `rosneuro_acquisition` node using the eegdev `datafile` plugin. This exercises:
+- Automatic `nchannels` / `chunkSize` / `sampleRate` discovery from the NeuroFrame
+- Channel name resolution from the GDF labels
+- Long-session dynamic logger (no fixed-size limit)
+
+```bash
+roslaunch artifacts_bci test_node_artifact_gdf.launch \
+    gdf_file:=$(rospack find artifacts_bci)/test/prova32ch.gdf \
+    samplerate:=512 \
+    framerate:=16
+# Wait for the file to finish, then Ctrl+C.
+```
+
+Produces in `test/`:
+- `artifacts_gdf_output.csv` — artifact flags indexed by seq
+- `artifacts_gdf_output_first_seq.txt` — first seq received (lost frames at startup)
+
+Compare with MATLAB:
+
+```matlab
+input_mode = 'gdf';
+test_artifacts   % in MATLAB, from workspace root
+```
+
+### Alignment details
+
+Two independent timing offsets must be corrected before comparing MATLAB and ROS:
+
+**1. `first_seq` — startup frame loss**
+
+`rosneuro_acquisition` takes a few milliseconds to initialise before it starts receiving data. The artifact detector therefore misses the first `first_seq` frames (typically 1–2). The logger records the first seq it receives in `*_first_seq.txt`.
+
+MATLAB **starts its processing loop at `seq = first_seq`** (not 0) so that both pipelines have identical zero-state IIR filters from the same starting sample. If MATLAB started from seq 0, its filter history would be `first_seq` frames longer than ROS's, making MATLAB consistently detect artifacts earlier.
+
+**2. Acquisition pipeline delay (GDF only)**
+
+When using `rosneuro_acquisition` with the eegdev `datafile` plugin, the acquisition node internally buffers one frame before publishing. As a result, ROS frame N carries samples that MATLAB would assign to frame N−1 — a systematic 1-frame delay in the ROS pipeline relative to direct file reading.
+
+The script measures this with a cross-correlation (`xcorr`) and corrects automatically:
+
+- `xcorr(ros, matlab)` peak at lag +k → MATLAB is k frames ahead of ROS
+- Correction: compare `ROS[k+1..N]` with `MATLAB[1..N-k]`
+
+Two figures are produced:
+- **RAW** — unaligned comparison (shows the lag visually)
+- **ALIGNED** — lag-corrected comparison (state changes overlap)
+
+The console prints mismatches for both cases. With the CSV publisher (no acquisition pipeline) `measured_lag = 0` and both figures are identical.
+
+### Logger details
+
+The logger node (`test/logger.cpp`) dynamically grows its output vector as seq numbers arrive — no fixed upper limit. At shutdown it writes the full seq-indexed vector to CSV and saves `first_seq` in a companion `.txt` file.
 
 ---
 
-### 5. Dependencies
+## 7. Dependencies
 
-This package requires several libraries for compilation and execution:
-
-* **rosneuro_msgs:** Required for the `NeuroFrame` input message.
-* **rosneuro_filters:** Used for the band-pass and high-pass filter implementations.
-* **Eigen:** Required for linear algebra operations and vector management.
-* **rtf (Ring-Time-Framework):** Used for the efficient real-time ring buffer implementation.
-* **yaml-cpp:** Required for parsing the `.yaml` configuration file.
+| Library | Used for |
+|---------|---------|
+| `rosneuro_msgs` | `NeuroFrame` input message |
+| `rosneuro_filters_butterworth` | IIR Butterworth LP/HP filters |
+| `rosneuro_filters_car` | Common Average Reference spatial filter |
+| `rosneuro_buffers_ringbuffer` | Shift-register ring buffer (NaN-initialised, `isfull()` ↔ no NaN) |
+| `Eigen` | Linear algebra, matrix operations |
+| `yaml-cpp` | YAML parameter loading (via ROS param server) |
