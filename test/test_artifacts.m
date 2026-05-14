@@ -22,17 +22,18 @@ clear all; clc; close all;
 input_mode = 'gdf';
 
 %% --- paths ---
-testpath        = './src/artifacts_bci/test/';
+data_dir        = './test_node_data/';
+out_dir         = './test_node_data/artifacts_bci/';
 artifact_yaml   = './src/artifacts_bci/cfg/artifact.yaml';
 ringbuffer_yaml = './src/artifacts_bci/cfg/ringbuffer.yaml';
 
 if strcmp(input_mode, 'gdf')
-    input_file = [testpath 'prova32ch.gdf'];
-    ros_file   = [testpath 'artifacts_gdf_output.csv'];
+    input_file = [data_dir 'prova32ch.gdf'];
+    ros_file   = [out_dir  'artifacts_gdf_output.csv'];
     framerate  = 16;   % must match test_node_artifact_gdf.launch  (512/16 = 32 samples/chunk)
 else
-    input_file = [testpath 'rawdata.csv'];
-    ros_file   = [testpath 'artifacts.csv'];
+    input_file = [data_dir 'raw_eeg_32ch.csv'];
+    ros_file   = [out_dir  'artifacts.csv'];
     framerate  = 20;
 end
 

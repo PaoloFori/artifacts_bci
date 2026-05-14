@@ -120,37 +120,56 @@ roslaunch artifacts_bci example_node_artifact.launch
 
 ## 6. Testing
 
+Test data and output files are all stored under `test_node_data/` in the workspace root. The logger creates `test_node_data/artifacts_bci/` automatically on first run.
+
+```
+test_node_data/
+├── raw_eeg_32ch.csv        ← CSV test input
+├── prova32ch.gdf           ← GDF test input
+└── artifacts_bci/          ← created automatically by the logger
+    ├── artifacts.csv
+    ├── artifacts_first_seq.txt
+    ├── artifacts_gdf_output.csv
+    └── artifacts_gdf_output_first_seq.txt
+```
+
 ### 6a. CSV-based test (quick sanity check)
 
-Uses `rawdata.csv` published chunk by chunk via the test publisher.
+Publishes `test_node_data/raw_eeg_32ch.csv` chunk by chunk via the test publisher.
 
 ```bash
 roslaunch artifacts_bci test_node_artifact.launch
+# Ctrl+C when done
 ```
 
-Produces `test/artifacts.csv`. Compare with MATLAB:
+Produces `test_node_data/artifacts_bci/artifacts.csv`. Compare with MATLAB:
 
 ```matlab
 input_mode = 'csv';
-test_artifacts   % in MATLAB, from workspace root
+test_artifacts   % from workspace root
 ```
 
 ### 6b. GDF-based test (realistic end-to-end validation)
 
-Replays `test/prova32ch.gdf` (512 Hz, ~33 channels, ~382 s) through the real `rosneuro_acquisition` node using the eegdev `datafile` plugin. This exercises:
+Replays `test_node_data/prova32ch.gdf` (512 Hz, ~33 channels, ~382 s) through the real `rosneuro_acquisition` node using the eegdev `datafile` plugin. This exercises:
 - Automatic `nchannels` / `chunkSize` / `sampleRate` discovery from the NeuroFrame
 - Channel name resolution from the GDF labels
 - Long-session dynamic logger (no fixed-size limit)
 
 ```bash
-roslaunch artifacts_bci test_node_artifact_gdf.launch \
-    gdf_file:=$(rospack find artifacts_bci)/test/prova32ch.gdf \
-    samplerate:=512 \
-    framerate:=16
+roslaunch artifacts_bci test_node_artifact_gdf.launch
 # Wait for the file to finish, then Ctrl+C.
 ```
 
-Produces in `test/`:
+The `gdf_file`, `data_dir`, and `out_dir` arguments default to `test_node_data/` — override only if needed:
+
+```bash
+roslaunch artifacts_bci test_node_artifact_gdf.launch \
+    gdf_file:=/path/to/other.gdf \
+    out_dir:=/path/to/output/
+```
+
+Produces in `test_node_data/artifacts_bci/`:
 - `artifacts_gdf_output.csv` — artifact flags indexed by seq
 - `artifacts_gdf_output_first_seq.txt` — first seq received (lost frames at startup)
 
@@ -158,7 +177,7 @@ Compare with MATLAB:
 
 ```matlab
 input_mode = 'gdf';
-test_artifacts   % in MATLAB, from workspace root
+test_artifacts   % from workspace root
 ```
 
 ### Alignment details

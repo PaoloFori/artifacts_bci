@@ -7,6 +7,7 @@
 #include <fstream>
 #include <algorithm>
 #include <limits>
+#include <cstdlib>
 
 class LoggerNode {
 public:
@@ -15,6 +16,13 @@ public:
             output_filename_ = "artifacts_output.csv";
             ROS_WARN("[Logger] 'output_filename' not set. Default: %s", output_filename_.c_str());
         }
+        // Create output directory if it doesn't exist
+        auto slash = output_filename_.rfind('/');
+        if (slash != std::string::npos) {
+            std::string dir = output_filename_.substr(0, slash);
+            std::system(("mkdir -p " + dir).c_str());
+        }
+
         // first_seq file sits next to the output CSV
         first_seq_filename_ = output_filename_.substr(0, output_filename_.rfind('.')) + "_first_seq.txt";
 

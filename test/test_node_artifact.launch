@@ -1,5 +1,10 @@
 <launch>
 
+    <arg name="data_dir"    default="$(find artifacts_bci)/../../test_node_data"/>
+    <arg name="out_dir"     default="$(arg data_dir)/artifacts_bci"/>
+    <arg name="chunk_size"  default="25"/>
+    <arg name="sample_rate" default="500"/>
+
     <!-- ARTIFACTS -->
     <rosparam command="load" file="$(find artifacts_bci)/cfg/ringbuffer.yaml"/>
     <rosparam command="load" file="$(find artifacts_bci)/cfg/artifact.yaml"/>
@@ -8,13 +13,11 @@
 
     <!-- TEST NODES -->
     <node pkg="artifacts_bci" type="test_logger_artifacts_bci" name="test_logger_artifacts_bci" output="screen">
-        <param name="output_filename" value="$(find artifacts_bci)/test/artifacts.csv"/>
+        <param name="output_filename" value="$(arg out_dir)/artifacts.csv"/>
     </node>
 
-    <arg name="chunk_size"  default="25"/>
-    <arg name="sample_rate" default="500"/>
     <node pkg="artifacts_bci" type="test_publisher_artifacts_bci" name="test_publisher_artifacts_bci" output="screen">
-        <param name="csv_file"    value="$(find artifacts_bci)/test/rawdata.csv"/>
+        <param name="csv_file"    value="$(arg data_dir)/raw_eeg_32ch.csv"/>
         <param name="chunk_size"  value="$(arg chunk_size)"/>
         <param name="sample_rate" value="$(arg sample_rate)"/>
     </node>
