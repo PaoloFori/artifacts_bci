@@ -31,10 +31,12 @@ if strcmp(input_mode, 'gdf')
     input_file = [data_dir 'prova32ch.gdf'];
     ros_file   = [out_dir  'artifacts_gdf_output.csv'];
     framerate  = 16;   % must match test_node_artifact_gdf.launch  (512/16 = 32 samples/chunk)
+    default_size = 256;
 else
     input_file = [data_dir 'raw_eeg_32ch.csv'];
     ros_file   = [out_dir  'artifacts.csv'];
     framerate  = 20;
+    default_size = 250;
 end
 
 %% --- read first_seq BEFORE the processing loop ---
@@ -53,7 +55,18 @@ end
 art_cfg    = yaml.ReadYaml(artifact_yaml);
 p          = art_cfg.ArtifactCfg.params;
 rb_cfg     = yaml.ReadYaml(ringbuffer_yaml);
-bufferSize = rb_cfg.RingBufferCfg.params.size;
+bufferSize = rb_cfg.RingBufferCfgArtifact.params.size;
+if ~isnumeric(bufferSize)
+    warning('bufferSize not numeric. Used default: %d', default_size);
+    bufferSize = default_size;
+elseif ~isscalar(bufferSize)
+    warning('bufferSize not scalar. Used default: %d', default_size);
+    bufferSize = default_size;
+elseif ~mod(bufferSize, 1) == 0
+    warning('bufferSize not int. Used default: %d', default_size);
+    bufferSize = default_size;
+end
+
 
 th_hEOG         = p.th_hEOG;
 th_vEOG         = p.th_vEOG;

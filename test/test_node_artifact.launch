@@ -4,9 +4,10 @@
     <arg name="out_dir"     default="$(arg data_dir)/artifacts_bci"/>
     <arg name="chunk_size"  default="25"/>
     <arg name="sample_rate" default="500"/>
+    <arg name="art_bufsize" default="$(eval int(arg('sample_rate') / 2))"/>
 
     <!-- ARTIFACTS -->
-    <rosparam command="load" file="$(find artifacts_bci)/cfg/ringbuffer.yaml"/>
+    <rosparam command="load" file="$(find artifacts_bci)/cfg/ringbuffer.yaml" subst_value="true"/>
     <rosparam command="load" file="$(find artifacts_bci)/cfg/artifact.yaml"/>
 
     <node name="artifactDetector_node" pkg="artifacts_bci" type="artifactDetector_node" output="screen"/>

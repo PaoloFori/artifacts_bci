@@ -1,17 +1,17 @@
 <launch>
 
     <!-- ================================================================ -->
-    <!-- PARAMETERS                                                         -->
+    <!-- PARAMETERS                                                       -->
     <!-- ================================================================ -->
     <arg name="data_dir"   default="/home/paolo/bci_vr_ws/test_node_data"/>
     <arg name="out_dir"    default="$(arg data_dir)/artifacts_bci"/>
     <arg name="gdf_file"   default="$(arg data_dir)/prova32ch.gdf"/>
     <arg name="samplerate" default="512"/>
     <arg name="framerate"  default="16"/>   <!-- chunkSize = 512/16 = 32 samples -->
+    <arg name="art_bufsize" default="$(eval int(arg('samplerate') / 2))"/>
 
     <!-- ================================================================ -->
-    <!-- ACQUISITION – replays GDF via eegdev datafile plugin              -->
-    <!-- Publishes /neurodata with channel labels read from the GDF file   -->
+    <!-- ACQUISITION                                                      -->
     <!-- ================================================================ -->
     <node name="acquisition" pkg="rosneuro_acquisition" type="acquisition" output="screen">
         <param name="~plugin"     value="rosneuro::EGDDevice"/>
@@ -21,16 +21,14 @@
     </node>
 
     <!-- ================================================================ -->
-    <!-- ARTIFACT DETECTOR                                                  -->
-    <!-- nchannels, chunkSize, sampleRate, and EOG channel indices are     -->
-    <!-- resolved automatically from the first NeuroFrame received.        -->
+    <!-- ARTIFACT DETECTOR                                                -->
     <!-- ================================================================ -->
-    <rosparam command="load" file="$(find artifacts_bci)/cfg/ringbuffer.yaml"/>
+    <rosparam command="load" file="$(find artifacts_bci)/cfg/ringbuffer.yaml" subst_value="true"/>
     <rosparam command="load" file="$(find artifacts_bci)/cfg/artifact.yaml"/>
     <node name="artifactDetector_node" pkg="artifacts_bci" type="artifactDetector_node" output="screen"/>
 
     <!-- ================================================================ -->
-    <!-- LOGGER – saves /artifact_presence flags indexed by seq           -->
+    <!-- LOGGER                                                           -->
     <!-- ================================================================ -->
     <node pkg="artifacts_bci" type="test_logger_artifacts_bci" name="test_logger_artifacts_bci" output="screen">
         <param name="output_filename" value="$(arg out_dir)/artifacts_gdf_output.csv"/>

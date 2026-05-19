@@ -1,5 +1,5 @@
-RingBufferCfg:
+RingBufferCfgArtifact:
   name: ringbuffer
   type: RingBufferFloat
-  params: 
-    size: 250
+  params:
+    size: $(arg art_bufsize)

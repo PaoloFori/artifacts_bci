@@ -200,7 +200,7 @@ bool ArtifactDetector::configure_signal(const rosneuro_msgs::NeuroFrame& msg){
 
         for(int i = 0; i < 2; i++){
             this->buffers_.push_back(new rosneuro::RingBuffer<float>());
-            if(!this->buffers_.back()->configure("RingBufferCfg")){
+            if(!this->buffers_.back()->configure("RingBufferCfgArtifact")){
                 ROS_ERROR("[%s] Buffer %d not configured correctly", this->name_.c_str(), i);
                 return false;
             }
