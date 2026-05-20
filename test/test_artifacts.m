@@ -19,7 +19,7 @@ clear all; clc; close all;
 %% --- input mode ---
 % 'gdf'  → reads prova32ch.gdf  (same file used in ROS test)
 % 'csv'  → reads rawdata.csv    (legacy CSV test, publisher sends seq from 0)
-input_mode = 'gdf';
+input_mode = 'csv';
 
 %% --- paths ---
 data_dir        = './test_node_data/';
